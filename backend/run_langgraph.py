@@ -10,6 +10,7 @@ def main() -> None:
     graph = build_trip_graph()
 
     # 你可以在这里替换为真实参数。
+
     request = TripRequest(
         city="北京",
         start_date="2025-06-01",

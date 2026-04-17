@@ -6,7 +6,7 @@ from ...models.schemas import (
     TripPlanResponse,
     ErrorResponse
 )
-from ...agents.trip_planner_agent import get_trip_planner_agent
+from ...langgraph_framework.trip_graph import build_trip_graph
 
 router = APIRouter(prefix="/trip", tags=["旅行规划"])
 
@@ -35,24 +35,22 @@ async def plan_trip(request: TripRequest):
         print(f"   天数: {request.travel_days}")
         print(f"{'='*60}\n")
 
-        # 获取Agent实例
-        print("🔄 获取多智能体系统实例...")
-        agent = get_trip_planner_agent()
+        # 实例化LangGraph
+        print("🔄 初始化LangGraph...")
+        graph = build_trip_graph()
 
-        # 生成旅行计划
-        print("🚀 开始生成旅行计划...")
-        trip_plan = agent.plan_trip(request)
+        # 运行LangGraph
+        print("🚀 开始运行LangGraph生成旅行计划...")
+        result = await graph.ainvoke({"request": request})
+        trip_plan = result.get("plan")
 
-        # 如果返回的是备用计划，明确告诉前端/用户
-        if getattr(agent, "_last_plan_was_fallback", False):
-            err = getattr(agent, "_last_error", None)
-            msg = "旅行计划生成失败，已返回备用计划"
-            if err:
-                msg += f"（原因：{err}）"
-            print(f"⚠️  {msg}\n")
+        # 检查是否有错误信息
+        error_msg = result.get("error")
+        if error_msg:
+            print(f"⚠️  LangGraph执行遇到问题，使用备用计划: {error_msg}\n")
             return TripPlanResponse(
                 success=False,
-                message=msg,
+                message=f"旅行计划生成遇到问题，已返回备用计划（原因：{error_msg}）",
                 data=trip_plan
             )
 
@@ -82,14 +80,14 @@ async def plan_trip(request: TripRequest):
 async def health_check():
     """健康检查"""
     try:
-        # 检查Agent是否可用
-        agent = get_trip_planner_agent()
-        
+        # 检查LangGraph是否可用
+        graph = build_trip_graph()
+
         return {
             "status": "healthy",
             "service": "trip-planner",
-            "agent_name": agent.agent.name,
-            "tools_count": len(agent.agent.list_tools())
+            "graph_status": "initialized",
+            "features": ["langgraph", "trip-planning"]
         }
     except Exception as e:
         raise HTTPException(
