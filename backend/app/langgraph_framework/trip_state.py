@@ -1,6 +1,6 @@
 """LangGraph State 定义：用于旅行规划流程。"""
 
-from typing import Optional, TypedDict
+from typing import Any, Optional, TypedDict
 
 from ..models.schemas import TripPlan, TripRequest
 
@@ -10,6 +10,9 @@ class TripGraphState(TypedDict, total=False):
 
     # 输入：用户请求
     request: TripRequest
+
+    # 中间结果：各智能体的处理结果
+    intermediate_result: dict[str, Any]
 
     # 输出：旅行计划结果
     plan: Optional[TripPlan]

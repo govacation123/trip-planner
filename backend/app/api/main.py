@@ -17,7 +17,7 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# 配置CORS
+# 配置CORS,前后端分离
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins_list(),

@@ -9,13 +9,13 @@ from dotenv import load_dotenv
 # 加载环境变量
 # 首先尝试加载当前目录的.env
 load_dotenv()
-
+'''
 # 然后尝试加载HelloAgents的.env(如果存在)
 helloagents_env = Path(__file__).parent.parent.parent.parent / "HelloAgents" / ".env"
 if helloagents_env.exists():
     load_dotenv(helloagents_env, override=False)  # 不覆盖已有的环境变量
 
-
+'''
 class Settings(BaseSettings):
     """应用配置"""
 
@@ -38,10 +38,29 @@ class Settings(BaseSettings):
     unsplash_access_key: str = ""
     unsplash_secret_key: str = ""
 
-    # LLM配置 (从环境变量读取,由HelloAgents管理)
+    # LLM配置 (从环境变量读取,支持LLM_*和OPENAI_*两种前缀)
     openai_api_key: str = ""
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4"
+    openai_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    openai_model: str = "qwen-plus-2025-07-28"
+    llm_timeout: int = 120
+
+    # 别名映射(兼容旧代码)
+    @property
+    def api_key(self) -> str:
+        return self.openai_api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+
+    @property
+    def llm_model(self) -> str:
+        return os.getenv("LLM_MODEL_ID") or self.openai_model
+
+    @property
+    def llm_base_url(self) -> str:
+        return os.getenv("LLM_BASE_URL") or self.openai_base_url
+
+    @property
+    def timeout(self) -> int:
+        timeout_env = os.getenv("LLM_TIMEOUT")
+        return int(timeout_env) if timeout_env else self.llm_timeout
 
     # 日志配置
     log_level: str = "INFO"
