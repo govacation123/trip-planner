@@ -33,6 +33,7 @@ class TripRequest(BaseModel):
         }
 
 
+
 class POISearchRequest(BaseModel):
     """POI搜索请求"""
     keywords: str = Field(..., description="搜索关键词", example="故宫")
@@ -195,6 +196,11 @@ class WeatherResponse(BaseModel):
     message: str = Field(default="", description="消息")
     data: List[WeatherInfo] = Field(default=[], description="天气信息")
 
+
+class TripRefineRequest(BaseModel):
+    """旅行计划优化/修改请求"""
+    plan: TripPlan = Field(..., description="当前旅行计划")
+    user_feedback: str = Field(..., description="用户修改意见", example="第二天行程太紧凑了，请调整轻松一些")
 
 # ============ 错误响应 ============
 

@@ -286,6 +286,57 @@
         </a-list>
         </a-card>
       </div>
+
+      <!-- 右侧聊天面板 -->
+      <div class="chat-panel">
+        <div class="chat-header">
+          <span>💬 行程优化助手</span>
+        </div>
+
+        <!-- 聊天历史消息列表 -->
+        <div class="chat-messages" ref="chatMessagesRef">
+          <div
+            v-for="(msg, index) in chatHistory"
+            :key="index"
+            :class="['chat-message', msg.role]"
+          >
+            <div class="message-avatar">
+              {{ msg.role === 'user' ? '👤' : '🤖' }}
+            </div>
+            <div class="message-content">
+              <div class="message-text">{{ msg.content }}</div>
+              <div class="message-time" v-if="msg.timestamp">{{ msg.timestamp }}</div>
+            </div>
+          </div>
+          <div v-if="isRefining" class="chat-message assistant thinking">
+            <div class="message-avatar">🤖</div>
+            <div class="message-content">
+              <div class="message-text">正在优化行程...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 输入区域 -->
+        <div class="chat-input-area">
+          <a-textarea
+            v-model:value="userFeedback"
+            placeholder="请输入您的修改意见，例如：第二天行程太紧凑了，请调整轻松一些"
+            :rows="3"
+            :disabled="isRefining"
+            @pressEnter="handleSendFeedback"
+          />
+          <a-button
+            type="primary"
+            class="send-button"
+            :loading="isRefining"
+            :disabled="isRefining || !userFeedback.trim()"
+            @click="handleSendFeedback"
+          >
+            <template #icon><SendOutlined /></template>
+            {{ isRefining ? '优化中...' : '发送' }}
+          </a-button>
+        </div>
+      </div>
     </div>
 
     <a-empty v-else description="没有找到旅行计划数据">
@@ -311,7 +362,7 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { DownOutlined } from '@ant-design/icons-vue'
+import { DownOutlined, SendOutlined } from '@ant-design/icons-vue'
 import AMapLoader from '@amap/amap-jsapi-loader'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
@@ -325,6 +376,96 @@ const attractionPhotos = ref<Record<string, string>>({})
 const activeSection = ref('overview')
 const activeDays = ref<number[]>([0]) // 默认展开第一天
 let map: any = null
+
+// ============ 聊天面板相关 ============
+const userFeedback = ref('')
+const isRefining = ref(false)
+const chatHistory = ref<Array<{ role: string; content: string; timestamp?: string }>>([
+  {
+    role: 'assistant',
+    content: '您好！我是行程优化助手。您可以告诉我您的修改意见，比如"第二天行程太紧凑了"或"想要增加更多美食推荐"，我会帮您调整行程。',
+    timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  }
+])
+const chatMessagesRef = ref<HTMLElement | null>(null)
+
+const handleSendFeedback = async () => {
+  const feedback = userFeedback.value.trim()
+  if (!feedback || isRefining.value || !tripPlan.value) return
+
+  // 1. 将用户输入推入 history
+  chatHistory.value.push({
+    role: 'user',
+    content: feedback,
+    timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  })
+
+  // 清空输入框
+  userFeedback.value = ''
+
+  // 滚动到底部
+  await nextTick()
+  if (chatMessagesRef.value) {
+    chatMessagesRef.value.scrollTop = chatMessagesRef.value.scrollHeight
+  }
+
+  // 2. 调用 refine 接口
+  isRefining.value = true
+
+  try {
+    const response = await fetch('http://localhost:8000/api/trip/refine', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        plan: tripPlan.value,
+        user_feedback: feedback
+      })
+    })
+
+    const result = await response.json()
+
+    if (result.success && result.data) {
+      // 3. 用返回的新计划替换当前计划
+      tripPlan.value = result.data
+      sessionStorage.setItem('tripPlan', JSON.stringify(result.data))
+
+      // 添加成功消息
+      chatHistory.value.push({
+        role: 'assistant',
+        content: '✅ 行程已优化完成！左侧计划已更新，请查看。',
+        timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+      })
+
+      // 重新初始化地图
+      if (map) {
+        map.destroy()
+      }
+      await nextTick()
+      initMap()
+    } else {
+      chatHistory.value.push({
+        role: 'assistant',
+        content: `⚠️ 优化遇到问题：${result.message || '未知错误'}`,
+        timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+      })
+    }
+  } catch (error: any) {
+    console.error('优化失败:', error)
+    chatHistory.value.push({
+      role: 'assistant',
+      content: `❌ 网络错误：${error.message || '请检查网络连接'}`,
+      timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    })
+  } finally {
+    isRefining.value = false
+    await nextTick()
+    if (chatMessagesRef.value) {
+      chatMessagesRef.value.scrollTop = chatMessagesRef.value.scrollHeight
+    }
+  }
+}
 
 onMounted(async () => {
   const data = sessionStorage.getItem('tripPlan')
@@ -979,7 +1120,7 @@ const drawRoutes = (AMap: any, attractions: any[]) => {
 
 /* 内容布局 */
 .content-wrapper {
-  max-width: 1400px;
+  max-width: 1600px;
   margin: 0 auto;
   display: flex;
   gap: 24px;
@@ -1429,6 +1570,122 @@ const drawRoutes = (AMap: any, attractions: any[]) => {
     flex-direction: column;
     gap: 16px;
   }
+
+  .chat-panel {
+    display: none;
+  }
+}
+
+/* ============ 聊天面板样式 ============ */
+.chat-panel {
+  width: 350px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  height: calc(100vh - 140px);
+  position: sticky;
+  top: 80px;
+}
+
+.chat-header {
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.chat-message {
+  display: flex;
+  gap: 10px;
+  max-width: 85%;
+}
+
+.chat-message.user {
+  flex-direction: row-reverse;
+  align-self: flex-end;
+}
+
+.chat-message.assistant {
+  align-self: flex-start;
+}
+
+.message-avatar {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.message-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-message.user .message-content {
+  align-items: flex-end;
+}
+
+.message-text {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.chat-message.user .message-text {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-message.assistant .message-text {
+  background: #f5f5f5;
+  color: #333;
+  border-bottom-left-radius: 4px;
+}
+
+.chat-message.thinking .message-text {
+  color: #999;
+  font-style: italic;
+}
+
+.message-time {
+  font-size: 11px;
+  color: #999;
+}
+
+.chat-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-input-area :deep(.ant-input) {
+  border-radius: 8px;
+  resize: none;
+}
+
+.send-button {
+  width: 100%;
+  border-radius: 8px;
+  height: 40px;
+  font-weight: 500;
 }
 </style>
 

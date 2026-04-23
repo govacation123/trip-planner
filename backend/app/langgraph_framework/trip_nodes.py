@@ -313,6 +313,101 @@ def planner_node(state: TripGraphState) -> dict[str, Any]:
         return {"plan": plan, "error": f"Planner解析失败: {e}"}
 
 
+# ============ Refiner Node（计划优化节点）============
+
+REFINER_PROMPT = """你是高级旅行计划优化专家。
+你的任务是根据用户的修改意见，对已有的旅行计划进行**最小范围的精准修改**。
+
+**明确修改策略**：
+- 用户反馈“太累/行程紧” → 减少对应天数的景点数量，增加单景点游玩时长。
+- 用户反馈“预算高/太贵” → 替换为更便宜的住宿或餐饮，并重新计算预算。
+- 用户反馈“不想去A景点” → 仅把A景点替换为同城其他景点。
+- 用户反馈“第X天不好” → 仅修改第X天的数据，其余天数原封不动。
+
+**强制规则**：
+1. 【最小修改】绝对不允许重写整个计划！只准改动用户提到的相关部分。
+2. 【格式一致】必须返回完整 JSON，且结构必须与原计划 100% 一致，不允许缺失或新增字段。
+3. 【只吐JSON】只返回 JSON 数据，不要包含任何解释性文字。
+4. 【交互反馈】请将你具体做了哪些修改（例如："已将第一天酒店更换为如家，节省了100元"），追加写进 JSON 的 `overall_suggestions` 字段末尾，以便前端展示给用户。
+
+用户修改意见：{feedback}
+
+现有旅行计划：
+{plan_json}
+
+请输出修改后的完整 JSON："""
+def build_refiner_prompt(plan: dict, feedback: str) -> str:
+    """
+    构造 Refiner 的 Prompt。
+
+    Args:
+        plan: 当前旅行计划（dict 格式）
+        feedback: 用户的修改意见
+
+    Returns:
+        构造好的 prompt 字符串
+    """
+    plan_json = json.dumps(plan, ensure_ascii=False, indent=2)
+    return REFINER_PROMPT.format(feedback=feedback, plan_json=plan_json)
+
+
+def refiner_node(state: TripGraphState) -> dict[str, Any]:
+    """
+    根据用户反馈对已有计划进行最小修改。
+
+    输入：
+    - state.plan：已有旅行计划
+    - state.user_feedback：用户修改意见
+
+    输出：
+    - 更新后的 plan
+    - error 信息（如有）
+    """
+    plan = state.get("plan")
+    user_feedback = state.get("user_feedback")
+
+    if not plan:
+        return {"error": "refiner_node: 原始计划不存在"}
+
+    if not user_feedback:
+        return {"plan": plan, "error": None}
+
+    try:
+        llm = _get_langchain_llm()
+        plan_dict = plan.model_dump()
+        prompt = build_refiner_prompt(plan_dict, user_feedback)
+
+        messages = [
+            SystemMessage(content="你是一个严谨的旅行计划修改助手，只输出JSON，不输出其他内容。"),
+            HumanMessage(content=prompt)
+        ]
+
+        response = llm.invoke(messages)
+        response_content = response.content
+
+        # 提取 JSON
+        if "```json" in response_content:
+            json_str = response_content.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_content:
+            json_str = response_content.split("```")[1].split("```")[0].strip()
+        elif "{" in response_content and "}" in response_content:
+            json_start = response_content.find("{")
+            json_end = response_content.rfind("}") + 1
+            json_str = response_content[json_start:json_end]
+        else:
+            raise ValueError("未找到JSON结构")
+
+        updated_data = json.loads(json_str)
+        updated_plan = TripPlan(**updated_data)
+
+        return {"plan": updated_plan, "error": None}
+
+    except Exception as e:
+        print(f"⚠️ 计划优化失败，回退原计划: {str(e)}")
+        # JSON 解析失败时返回原计划，不抛异常
+        return {"plan": plan, "error": f"Refiner解析失败: {e}"}
+
+
 def _build_fallback_plan(request: TripRequest) -> TripPlan:
     """生成兜底旅行计划"""
     start_date = datetime.strptime(request.start_date, "%Y-%m-%d")
