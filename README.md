@@ -1,22 +1,23 @@
-# HelloAgents智能旅行助手 🌍✈️
+# 智能旅行助手 🌍✈️
 
-基于HelloAgents框架构建的智能旅行规划助手,集成高德地图MCP服务,提供个性化的旅行计划生成。
+基于 LangGraph + LangChain 构建的智能旅行规划助手，集成高德地图 Web API，提供个性化的旅行计划生成与多轮优化功能。
 
 ## ✨ 功能特点
 
-- 🤖 **AI驱动的旅行规划**: 基于HelloAgents框架的SimpleAgent,智能生成详细的多日旅程
-- 🗺️ **高德地图集成**: 通过MCP协议接入高德地图服务,支持景点搜索、路线规划、天气查询
-- 🧠 **智能工具调用**: Agent自动调用高德地图MCP工具,获取实时POI、路线和天气信息
-- 🎨 **现代化前端**: Vue3 + TypeScript + Vite,响应式设计,流畅的用户体验
+- 🤖 **AI驱动的旅行规划**: 基于 LangGraph 框架，多节点并行执行（天气、酒店、景点），智能生成详细的多日旅程
+- 🗺️ **高德地图集成**: 直接调用高德地图 REST API，支持景点搜索、路线规划、天气查询
+- 🔄 **多轮优化**: 支持用户反馈修改计划，AI 对原计划进行最小化修改而非重写
+- 💬 **实时对话**: 右侧聊天面板可直接输入修改意见，无需刷新页面
+- 🎨 **现代化前端**: Vue3 + TypeScript + Vite，响应式设计，流畅的用户体验
 - 📱 **完整功能**: 包含住宿、交通、餐饮和景点游览时间推荐
 
 ## 🏗️ 技术栈
 
 ### 后端
-- **框架**: HelloAgents (基于SimpleAgent)
+- **框架**: LangGraph + LangChain
 - **API**: FastAPI
-- **MCP工具**: amap-mcp-server (高德地图)
-- **LLM**: 支持多种LLM提供商(OpenAI, DeepSeek等)
+- **LLM**: 通义千问（通过 DashScope API）
+- **地图**: 高德地图 Web REST API
 
 ### 前端
 - **框架**: Vue 3 + TypeScript
@@ -28,31 +29,33 @@
 ## 📁 项目结构
 
 ```
-helloagents-trip-planner/
+trip-planner/
 ├── backend/                    # 后端服务
 │   ├── app/
-│   │   ├── agents/            # Agent实现
-│   │   │   └── trip_planner_agent.py
 │   │   ├── api/               # FastAPI路由
 │   │   │   ├── main.py
 │   │   │   └── routes/
-│   │   │       ├── trip.py
-│   │   │       └── map.py
+│   │   │       ├── trip.py    # 旅行规划API（含/refine）
+│   │   │       ├── map.py     # 地图服务API
+│   │   │       └── poi.py     # POI搜索API
+│   │   ├── langgraph_framework/  # LangGraph核心
+│   │   │   ├── trip_graph.py  # 图结构定义
+│   │   │   ├── trip_nodes.py  # 节点定义（weather/hotel/attraction/planner/refiner）
+│   │   │   └── trip_state.py  # 状态定义
 │   │   ├── services/          # 服务层
-│   │   │   ├── amap_service.py
-│   │   │   └── llm_service.py
+│   │   │   └── amap_service.py  # 高德地图API封装
 │   │   ├── models/            # 数据模型
 │   │   │   └── schemas.py
 │   │   └── config.py          # 配置管理
 │   ├── requirements.txt
-│   ├── .env.example
-│   └── .gitignore
+│   └── .env.example
 ├── frontend/                   # 前端应用
 │   ├── src/
-│   │   ├── components/        # Vue组件
-│   │   ├── services/          # API服务
-│   │   ├── types/             # TypeScript类型
-│   │   └── views/             # 页面视图
+│   │   ├── views/
+│   │   │   ├── Home.vue       # 首页（旅行表单）
+│   │   │   └── Result.vue     # 结果页（左侧计划+右侧聊天面板）
+│   │   └── types/
+│   │       └── index.ts       # TypeScript类型定义
 │   ├── package.json
 │   └── vite.config.ts
 └── README.md
@@ -64,8 +67,8 @@ helloagents-trip-planner/
 
 - Python 3.10+
 - Node.js 16+
-- 高德地图API密钥 (Web服务API和Web端(JS API))
-- LLM API密钥 (OpenAI/DeepSeek等)
+- 高德地图 API 密钥（Web 服务 API）
+- 通义千问 API 密钥（DashScope）
 
 ### 后端安装
 
@@ -88,7 +91,7 @@ pip install -r requirements.txt
 4. 配置环境变量
 ```bash
 cp .env.example .env
-# 编辑.env文件,填入你的API密钥
+# 编辑 .env 文件，填入你的 API 密钥
 ```
 
 5. 启动后端服务
@@ -110,8 +113,8 @@ npm install
 
 3. 配置环境变量
 ```bash
-# 创建.env文件, 填入高德地图Web API Key 和 Web端JS API Key
 cp .env.example .env
+# 填入高德地图 Web API Key 和 Web 端 JS API Key
 ```
 
 4. 启动开发服务器
@@ -123,77 +126,77 @@ npm run dev
 
 ## 📝 使用指南
 
-1. 在首页填写旅行信息:
+### 首次生成旅行计划
+
+1. 在首页填写旅行信息：
    - 目的地城市
    - 旅行日期和天数
    - 交通方式偏好
    - 住宿偏好
    - 旅行风格标签
 
-2. 点击"生成旅行计划"按钮
+2. 点击「生成旅行计划」按钮
 
-3. 系统将:
-   - 调用HelloAgents Agent生成初步计划
-   - Agent自动调用高德地图MCP工具搜索景点
-   - Agent获取天气信息和路线规划
-   - 整合所有信息生成完整行程
+3. 系统将：
+   - **并行**调用天气、酒店、景点三个节点
+   - 汇总数据后由 Planner 生成完整行程
+   - 展示每日详细计划、景点地图、天气预报
 
-4. 查看结果:
-   - 每日详细行程
-   - 景点信息与地图标记
-   - 交通路线规划
-   - 天气预报
-   - 餐饮推荐
+### 多轮优化修改
+
+1. 在结果页面右侧的聊天面板输入修改意见，例如：
+   - 「第二天行程太紧凑了，请调整轻松一些」
+   - 「增加更多美食推荐」
+   - 「把第三天的博物馆换成自然景观」
+
+2. 点击发送按钮
+
+3. 系统调用 `/api/trip/refine` 接口：
+   - LLM 读取原计划，根据反馈进行**最小修改**
+   - 返回更新后的计划（不重写全部行程）
+   - 左侧视图自动更新
+
+4. 可多次对话，逐步优化
 
 ## 🔧 核心实现
 
-### HelloAgents Agent集成
+### LangGraph 图结构
 
-```python
-from hello_agents import SimpleAgent, HelloAgentsLLM
-from hello_agents.tools import MCPTool
-
-# 创建高德地图MCP工具
-amap_tool = MCPTool(
-    name="amap",
-    server_command=["uvx", "amap-mcp-server"],
-    env={"AMAP_MAPS_API_KEY": "your_api_key"},
-    auto_expand=True
-)
-
-# 创建旅行规划Agent
-agent = SimpleAgent(
-    name="旅行规划助手",
-    llm=HelloAgentsLLM(),
-    system_prompt="你是一个专业的旅行规划助手..."
-)
-
-# 添加工具
-agent.add_tool(amap_tool)
+```
+用户输入
+    ↓
+START → 条件路由（根据 user_feedback）
+    ├─ 有反馈 → refiner_node → END
+    └─ 无反馈 → [weather_agent || hotel_agent || attraction_agent] 并行
+                    ↓
+               planner_agent → END
 ```
 
-### MCP工具调用
+### 高德地图 API 封装
 
-Agent可以自动调用以下高德地图MCP工具:
-- `maps_text_search`: 搜索景点POI
-- `maps_weather`: 查询天气
-- `maps_direction_walking_by_address`: 步行路线规划
-- `maps_direction_driving_by_address`: 驾车路线规划
-- `maps_direction_transit_integrated_by_address`: 公共交通路线规划
+直接调用高德 REST API，无需 MCP 工具：
 
-## 📄 API文档
+```python
+# 搜索 POI
+GET https://restapi.amap.com/v3/place/text?keywords=故宫&city=北京&key=YOUR_KEY
 
-启动后端服务后,访问 `http://localhost:8000/docs` 查看完整的API文档。
+# 查询天气
+GET https://restapi.amap.com/v3/weather/weatherinfo?city=北京&extensions=all&key=YOUR_KEY
 
-主要端点:
+# 地理编码
+GET https://restapi.amap.com/v3/geocode/geo?address=北京市朝阳区&key=YOUR_KEY
+```
+
+## 📄 API 文档
+
+启动后端服务后，访问 `http://localhost:8000/docs` 查看完整的 API 文档。
+
+主要端点：
 - `POST /api/trip/plan` - 生成旅行计划
-- `GET /api/map/poi` - 搜索POI
+- `POST /api/trip/refine` - 优化/修改旅行计划
+- `GET /api/map/poi` - 搜索 POI
 - `GET /api/map/weather` - 查询天气
 - `POST /api/map/route` - 规划路线
-
-## 🤝 贡献指南
-
-欢迎提交Pull Request或Issue!
 
 ## 📜 开源协议
 
@@ -201,12 +204,11 @@ CC BY-NC-SA 4.0
 
 ## 🙏 致谢
 
-- [HelloAgents](https://github.com/datawhalechina/Hello-Agents) - 智能体教程
-- [HelloAgents框架](https://github.com/jjyaoao/HelloAgents) - 智能体框架
+- [LangGraph](https://langchain-ai.github.io/langgraph/) - 多智能体编排框架
+- [LangChain](https://www.langchain.com/) - LLM 应用开发框架
 - [高德地图开放平台](https://lbs.amap.com/) - 地图服务
-- [amap-mcp-server](https://github.com/sugarforever/amap-mcp-server) - 高德地图MCP服务器
+- [通义千问](https://tongyi.aliyun.com/) - 大语言模型
 
 ---
 
-**HelloAgents智能旅行助手** - 让旅行计划变得简单而智能 🌈
-
+**智能旅行助手** - 让旅行计划变得简单而智能 🌈
