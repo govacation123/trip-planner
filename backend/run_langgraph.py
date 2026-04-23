@@ -1,4 +1,5 @@
 """LangGraph 示例入口：演示 State / 节点 / Graph 编译与 invoke 运行。"""
+#把这个文件删掉，这个太简单了
 import sys
 import asyncio
 from app.langgraph_framework.trip_graph import build_trip_graph

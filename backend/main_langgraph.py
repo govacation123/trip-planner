@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings, validate_config, print_config
 from app.api.routes import trip, poi, map as map_routes
-#v2版langgraph框架下的智能旅行助手
+
 # 获取配置
 settings = get_settings()
 

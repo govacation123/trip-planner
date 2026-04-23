@@ -149,11 +149,43 @@ def amap_search_tool(query: str, city: str, search_type: str) -> str:
     - city: 目标城市名称（如 "上海"）
     - search_type: 搜索类型，可选值为 "poi" (查景点/酒店) 或 "weather" (查天气)
     """
-    print(f"🔧 [Tool Execution] 正在调用高德工具搜索: {city} 的 {query}...")
-    if search_type == "weather":
-        return f"{city}天气查询结果：晴转多云，气温 15-25 度，南风 2 级。"
-    else:
-        return f"{city} {query} 搜索结果：\n1. 结果A，地址：{city}中心，经纬度: 116.4, 39.9\n2. 结果B，地址：{city}郊区，经纬度: 116.5, 39.8"
+    from ..services.amap_service import get_amap_service
+
+    print(f"🔧 [Tool Execution] 正在调用高德工具搜索: {city} 的 {query} (类型: {search_type})...")
+
+    try:
+        amap_service = get_amap_service()
+
+        if search_type == "weather":
+            # 查询天气
+            weather_list = amap_service.get_weather(city)
+            if weather_list:
+                result_parts = []
+                for w in weather_list:
+                    result_parts.append(
+                        f"{w.date}: 白天{w.day_weather}, 夜间{w.night_weather}, "
+                        f"气温 {w.day_temp}-{w.night_temp}°C, "
+                        f"{w.wind_direction}{w.wind_power}"
+                    )
+                return "\n".join(result_parts) if result_parts else f"{city}天气查询无结果"
+            return f"{city}天气查询无结果"
+        else:
+            # POI搜索（景点、酒店等）
+            poi_list = amap_service.search_poi(query, city)
+            if poi_list:
+                result_parts = []
+                for i, poi in enumerate(poi_list[:10], 1):  # 最多返回10个结果
+                    result_parts.append(
+                        f"{i}. {poi.name}，地址：{poi.address}，"
+                        f"经纬度: {poi.location.longitude}, {poi.location.latitude}，"
+                        f"类型: {poi.type}"
+                    )
+                return "\n".join(result_parts) if result_parts else f"{city} {query} 搜索无结果"
+            return f"{city} {query} 搜索无结果"
+
+    except Exception as e:
+        print(f"❌ 高德工具调用失败: {str(e)}")
+        return f"高德地图API调用失败: {str(e)}"
 
 
 # ============ 工具调用循环封装 ============
