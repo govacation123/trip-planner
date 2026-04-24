@@ -17,7 +17,8 @@ class TripRequest(BaseModel):
     accommodation: str = Field(..., description="住宿偏好", example="经济型酒店")
     preferences: List[str] = Field(default=[], description="旅行偏好标签", example=["历史文化", "美食"])
     free_text_input: Optional[str] = Field(default="", description="额外要求", example="希望多安排一些博物馆")
-    
+    scenario: Optional[str] = Field(default=None, description="出行目的场景", example="亲子度假")
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -28,7 +29,8 @@ class TripRequest(BaseModel):
                 "transportation": "公共交通",
                 "accommodation": "经济型酒店",
                 "preferences": ["历史文化", "美食"],
-                "free_text_input": "希望多安排一些博物馆"
+                "free_text_input": "希望多安排一些博物馆",
+                "scenario": "亲子度假"
             }
         }
 
@@ -201,6 +203,8 @@ class TripRefineRequest(BaseModel):
     """旅行计划优化/修改请求"""
     plan: TripPlan = Field(..., description="当前旅行计划")
     user_feedback: str = Field(..., description="用户修改意见", example="第二天行程太紧凑了，请调整轻松一些")
+    session_id: Optional[str] = Field(default=None, description="用户会话ID，用于关联长期记忆")
+    scenario: Optional[str] = Field(default=None, description="用户在表单中选择的出行目的场景，用于优先召回对应记忆")
 
 # ============ 错误响应 ============
 

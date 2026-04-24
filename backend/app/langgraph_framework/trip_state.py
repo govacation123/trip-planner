@@ -26,3 +26,18 @@ class TripGraphState(TypedDict, total=False):
     # 记录用户多轮反馈要求
     history: List[str]
 
+    # 用户标识（前端传入的 session_id）
+    user_id: Optional[str]
+
+    # 长期记忆（用户偏好等）
+    user_profile: Optional[dict]
+
+    # 当前出游场景（如"亲子度假"、"商务出差"等）
+    current_scenario: Optional[str]
+
+    # 仅针对当前场景召回的长期记忆
+    relevant_memory: Optional[dict]
+
+    # 用户在表单原始选择的场景（Refine 时从请求中传入，优先于推断值）
+    scenario: Optional[str]
+

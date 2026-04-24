@@ -1,5 +1,6 @@
 """旅行规划API路由"""
 
+from typing import Any
 from fastapi import APIRouter, HTTPException
 from ...models.schemas import (
     TripRequest,
@@ -94,12 +95,24 @@ async def refine_trip(request: TripRefineRequest):
         print(f"📥 收到旅行计划优化请求:")
         print(f"   原计划城市: {request.plan.city}")
         print(f"   用户反馈: {request.user_feedback}")
+        print(f"   Session ID: {request.session_id or '无'}")
         print(f"{'='*60}\n")
 
-        # 构建状态：只传 plan 和 user_feedback
-        state = {
+        # 从 memory_service 获取用户长期偏好
+        user_profile = {}
+        if request.session_id:
+            from ...services.memory_service import get_user_profile
+            user_profile = get_user_profile(request.session_id)
+            print(f"📋 加载用户偏好: {user_profile}")
+
+        # 构建状态
+        state: dict[str, Any] = {
             "plan": request.plan,
-            "user_feedback": request.user_feedback
+            "user_feedback": request.user_feedback,
+            "user_id": request.session_id,
+            "user_profile": user_profile,
+            "history": [],  # 新会话从空历史开始
+            "scenario": request.scenario  # 用户表单原始选择的场景，优先于推断值
         }
 
         # 实例化LangGraph
@@ -110,6 +123,16 @@ async def refine_trip(request: TripRefineRequest):
         print("🚀 开始运行LangGraph优化旅行计划...")
         result = await graph.ainvoke(state)
         updated_plan = result.get("plan")
+
+        # 获取更新后的 user_profile 和 history
+        updated_profile = result.get("user_profile", user_profile)
+        updated_history = result.get("history", [])
+
+        # 如果有 user_id，保存更新后的偏好
+        if request.session_id and updated_profile:
+            from ...services.memory_service import save_user_profile
+            save_user_profile(request.session_id, updated_profile)
+            print(f"💾 已保存用户偏好: {updated_profile}")
 
         # 检查是否有错误信息
         error_msg = result.get("error")

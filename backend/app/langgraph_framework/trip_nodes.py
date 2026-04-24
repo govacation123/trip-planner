@@ -70,6 +70,11 @@ HOTEL_AGENT_PROMPT = """你是高级酒店推荐专家。
 PLANNER_AGENT_PROMPT = """你是首席行程规划专家。
 你的任务是根据前面助手收集的景点、天气和酒店信息，生成详细的旅行计划。
 
+**⚖️ 规划约束优先级（发生冲突时，严格从上至下服从）**：
+1. [最高优先级] 用户的明确请求参数（城市、天数、基础预算等）。
+2. [次高优先级] 前置助手搜索到的客观数据（景点、酒店、天气）。
+3. [最低优先级/辅助建议] 大数据统计的同类场景大众偏好（Crowd Memory）。如果用户未提出特别要求，请尽量参考这些大众偏好来优化行程。
+
 请严格按照以下JSON格式返回旅行计划（不要输出除JSON以外的任何内容）:
 ```json
 {
@@ -157,7 +162,7 @@ def amap_search_tool(query: str, city: str, search_type: str) -> str:
         amap_service = get_amap_service()
 
         if search_type == "weather":
-            # 查询天气
+            # service 内部已处理 adcode 转换，直接调用
             weather_list = amap_service.get_weather(city)
             if weather_list:
                 result_parts = []
@@ -188,6 +193,50 @@ def amap_search_tool(query: str, city: str, search_type: str) -> str:
         return f"高德地图API调用失败: {str(e)}"
 
 
+# ============ 轻量 MCP 工具体系 ============
+
+# 工具注册表
+TOOLS_REGISTRY: dict[str, Any] = {}
+
+
+def register_tool(name: str, tool_func: Any) -> None:
+    """
+    注册工具到注册表。
+
+    Args:
+        name: 工具名称
+        tool_func: LangChain @tool 装饰的函数
+    """
+    TOOLS_REGISTRY[name] = tool_func
+
+
+def execute_tool(tool_name: str, args: dict) -> str:
+    """
+    从注册表获取并执行工具。
+
+    Args:
+        tool_name: 工具名称
+        args: 工具参数
+
+    Returns:
+        工具执行结果字符串
+    """
+    tool_func = TOOLS_REGISTRY.get(tool_name)
+    if not tool_func:
+        return f"Error: 找不到名为 {tool_name} 的工具"
+
+    try:
+        result = tool_func.invoke(args)
+        return str(result)
+    except Exception as e:
+        print(f"❌ 工具 {tool_name} 执行失败: {str(e)}")
+        return f"工具执行失败: {str(e)}"
+
+
+# 注册 amap_search_tool 到注册表
+register_tool("amap_search_tool", amap_search_tool)
+
+
 # ============ 工具调用循环封装 ============
 
 def _run_agent_with_tools(system_prompt: str, user_query: str) -> str:
@@ -208,10 +257,8 @@ def _run_agent_with_tools(system_prompt: str, user_query: str) -> str:
             tool_name = tool_call["name"]
             tool_args = tool_call["args"]
 
-            if tool_name == "amap_search_tool":
-                tool_result = amap_search_tool.invoke(tool_args)
-            else:
-                tool_result = f"Error: 找不到名为 {tool_name} 的工具"
+            # 使用 MCP 风格的 execute_tool（替代硬编码 if-else）
+            tool_result = execute_tool(tool_name, tool_args)
 
             messages.append(ToolMessage(
                 content=str(tool_result),
@@ -276,6 +323,13 @@ def planner_node(state: TripGraphState) -> dict[str, Any]:
         weather = intermediate_result.get("weather_data", "无数据")
         hotels = intermediate_result.get("hotel_data", "无数据")
 
+        # 💡 群体智慧：同类场景大众偏好
+        crowd_memory = {}
+        if request.scenario:
+            from ..services.memory_service import get_popular_scenario_preferences
+            crowd_memory = get_popular_scenario_preferences(request.scenario, top_k=3)
+            print(f"🌐 群体智慧 [{request.scenario}] Top偏好: {crowd_memory}")
+
         query = f"""
 请基于以下信息规划行程:
 城市: {request.city} ({request.start_date} 至 {request.end_date}, 共{request.travel_days}天)
@@ -284,7 +338,10 @@ def planner_node(state: TripGraphState) -> dict[str, Any]:
 景点数据: {attractions}
 天气数据: {weather}
 酒店数据: {hotels}
-"""
+""" + (f"""
+【同类场景（{request.scenario}）的大众热门偏好参考】（请在用户未明确要求时作为辅助参考）:
+{crowd_memory}
+""" if crowd_memory else "")
         messages = [
             SystemMessage(content=PLANNER_AGENT_PROMPT),
             HumanMessage(content=query)
@@ -313,58 +370,163 @@ def planner_node(state: TripGraphState) -> dict[str, Any]:
         return {"plan": plan, "error": f"Planner解析失败: {e}"}
 
 
-# ============ Refiner Node（计划优化节点）============
+# ============ 模块二：大模型结构化提取记忆 (MemoryExtraction) ============
+from pydantic import BaseModel, Field
+from typing import Literal
+
+
+class MemoryExtraction(BaseModel):
+    """
+    结构化记忆提取模型。
+    使用 LangChain Structured Output 确保 LLM 返回严格格式。
+    """
+    scenario: Literal[
+        "商务出差", "亲子度假", "情侣伴侣",
+        "朋友聚会", "独自旅行", "常规旅行"
+    ] = Field(
+        description=(
+            "必须根据用户历史和本次反馈推断出行目的。"
+            "如提到开会选'商务出差'，带娃选'亲子度假'，"
+            "情侣出游选'情侣伴侣'，无明显特征选'常规旅行'。"
+        )
+    )
+    preferences: dict = Field(
+        description="提取用户的客观偏好字典，如住宿类型、饮食禁忌、节奏偏好、预算范围等。"
+    )
+
+
+def extract_user_profile(
+    feedback: str,
+    history: list[str],
+    current_profile: Optional[dict]
+) -> tuple[str, dict]:
+    """
+    使用 LangChain Structured Output 从用户反馈和历史中提取场景和偏好。
+
+    Args:
+        feedback: 当前用户反馈
+        history: 历史对话列表
+        current_profile: 当前已有 profile（用于上下文）
+
+    Returns:
+        tuple[str, dict]: (推断出的场景, 提取的偏好字典)
+    """
+    # 构建上下文文本
+    history_text = "\n".join(f"- {h}" for h in history) if history else "无历史记录"
+    current_text = json.dumps(current_profile, ensure_ascii=False, indent=2) if current_profile else "无"
+
+    prompt = f"""你是一个用户偏好分析专家。请根据以下信息推断用户的出行场景和偏好。
+
+【用户历史对话】
+{history_text}
+
+【本次用户反馈】
+{feedback}
+
+【当前已知偏好】
+{current_text}
+
+请分析并推断：
+1. 出行场景：从"商务出差"、"亲子度假"、"情侣伴侣"、"朋友聚会"、"独自旅行"、"常规旅行"中选择最合适的。
+2. 用户偏好：提取客观偏好（住宿类型、饮食禁忌、节奏偏好、预算范围等）。
+
+直接输出分析结果，不需要解释。"""
+
+    try:
+        llm = _get_langchain_llm()
+        structured_llm = llm.with_structured_output(MemoryExtraction)
+        result = structured_llm.invoke([
+            SystemMessage(content="你是一个严谨的用户偏好分析助手。"),
+            HumanMessage(content=prompt)
+        ])
+        return result.scenario, result.preferences
+    except Exception as e:
+        print(f"⚠️ 记忆提取失败，使用默认场景: {str(e)}")
+        return "常规旅行", {}
+
+
+# ============ 模块三/四：场景化 Refiner Node + 优先级防发散 Prompt ============
 
 REFINER_PROMPT = """你是高级旅行计划优化专家。
-你的任务是根据用户的修改意见，对已有的旅行计划进行**最小范围的精准修改**。
+你的任务是结合用户的即时反馈和场景化长期记忆，对已有旅行计划进行**最小范围的精准修改**。
 
-**明确修改策略**：
-- 用户反馈“太累/行程紧” → 减少对应天数的景点数量，增加单景点游玩时长。
-- 用户反馈“预算高/太贵” → 替换为更便宜的住宿或餐饮，并重新计算预算。
-- 用户反馈“不想去A景点” → 仅把A景点替换为同城其他景点。
-- 用户反馈“第X天不好” → 仅修改第X天的数据，其余天数原封不动。
+**上下文优先级规则（发生冲突时，严格从上至下服从）：**
+- [最高优先级/硬约束] 用户的最新修改意见（user_feedback）。
+- [次高优先级/工作记忆] 当前旅行计划的原始硬性参数（城市、天数、基础预算等）。
+- [最低优先级/软约束] 用户的场景化长期记忆（relevant_memory）。仅作为参考，如与最高/次高优先级冲突，必须忽略长期记忆。
+
+**修改策略**：
+- 用户反馈"太累/行程紧" → 减少对应天数的景点数量，增加单景点游玩时长。
+- 用户反馈"预算高/太贵" → 替换为更便宜的住宿或餐饮，并重新计算预算。
+- 用户反馈"不想去A景点" → 仅把A景点替换为同城其他景点。
+- 用户反馈"第X天不好" → 仅修改第X天的数据，其余天数原封不动。
 
 **强制规则**：
 1. 【最小修改】绝对不允许重写整个计划！只准改动用户提到的相关部分。
-2. 【格式一致】必须返回完整 JSON，且结构必须与原计划 100% 一致，不允许缺失或新增字段。
+2. 【格式一致】必须返回完整 JSON，且结构必须与原计划 100% 一致。
 3. 【只吐JSON】只返回 JSON 数据，不要包含任何解释性文字。
-4. 【交互反馈】请将你具体做了哪些修改（例如："已将第一天酒店更换为如家，节省了100元"），追加写进 JSON 的 `overall_suggestions` 字段末尾，以便前端展示给用户。
+4. 【交互反馈】请将你具体做了哪些修改，追加写进 JSON 的 `overall_suggestions` 字段末尾。
 
-用户修改意见：{feedback}
+用户修改意见（最高优先级）：{feedback}
+
+用户当前场景化长期记忆（最低优先级）：
+{relevant_memory}
 
 现有旅行计划：
 {plan_json}
 
 请输出修改后的完整 JSON："""
-def build_refiner_prompt(plan: dict, feedback: str) -> str:
+
+
+def build_refiner_prompt(
+    plan: dict,
+    feedback: str,
+    relevant_memory: Optional[dict]
+) -> str:
     """
     构造 Refiner 的 Prompt。
 
     Args:
         plan: 当前旅行计划（dict 格式）
         feedback: 用户的修改意见
+        relevant_memory: 当前场景的召回记忆
 
     Returns:
         构造好的 prompt 字符串
     """
     plan_json = json.dumps(plan, ensure_ascii=False, indent=2)
-    return REFINER_PROMPT.format(feedback=feedback, plan_json=plan_json)
+    memory_str = json.dumps(relevant_memory or {}, ensure_ascii=False, indent=2)
+    return REFINER_PROMPT.format(
+        feedback=feedback,
+        relevant_memory=memory_str,
+        plan_json=plan_json
+    )
 
 
 def refiner_node(state: TripGraphState) -> dict[str, Any]:
     """
-    根据用户反馈对已有计划进行最小修改。
+    根据用户反馈对已有计划进行最小修改，
+    并使用场景化记忆机制更新长期记忆。
 
     输入：
     - state.plan：已有旅行计划
     - state.user_feedback：用户修改意见
+    - state.user_id：用户标识（用于保存记忆）
+    - state.user_profile：当前用户完整偏好
+    - state.history：历史对话
 
     输出：
     - 更新后的 plan
+    - 更新的 user_profile
+    - current_scenario：当前推断的场景
+    - relevant_memory：召回的场景记忆
     - error 信息（如有）
     """
     plan = state.get("plan")
     user_feedback = state.get("user_feedback")
+    user_id = state.get("user_id")
+    user_profile = state.get("user_profile") or {}
+    history = state.get("history") or []
 
     if not plan:
         return {"error": "refiner_node: 原始计划不存在"}
@@ -373,9 +535,47 @@ def refiner_node(state: TripGraphState) -> dict[str, Any]:
         return {"plan": plan, "error": None}
 
     try:
+        # 1. 优先使用用户在表单原始选择的 scenario（从 state.scenario 传入）
+        #    仅当用户通过反馈明确表达场景变更（如"改成亲子度假"）时才推断新场景
+        original_scenario = state.get("scenario")
+        inferred_scenario, new_preferences = extract_user_profile(
+            user_feedback, history, user_profile
+        )
+        print(f"🔍 推断场景: {inferred_scenario}, 偏好: {new_preferences}")
+
+        # 用户明确在反馈中提到场景变更 → 使用推断值；否则优先信任表单原始选择
+        explicit_change_keywords = ["改成", "改为", "换成", "变更为", "切换到", "改成", "调成"]
+        feedback_mentions_change = any(kw in user_feedback for kw in explicit_change_keywords)
+
+        if original_scenario and not feedback_mentions_change:
+            # 信任表单原始选择，不重新推断
+            final_scenario = original_scenario
+            print(f"✅ 优先使用表单原始场景 [{final_scenario}]，未检测到场景变更")
+        elif inferred_scenario:
+            # 无原始场景 或 用户明确改变场景 → 使用推断值
+            final_scenario = inferred_scenario
+            print(f"🔄 使用推断场景 [{final_scenario}]")
+        else:
+            final_scenario = "常规旅行"
+            print(f"⚠️ 无有效场景，使用默认场景 [常规旅行]")
+
+        # 2. 如果有 user_id，保存偏好到指定场景下
+        if user_id:
+            from ..services.memory_service import save_scenario_memory
+            save_scenario_memory(user_id, final_scenario, new_preferences)
+            print(f"💾 已保存偏好到场景 [{final_scenario}]")
+
+        # 3. 精准召回：从数据库读取该场景的记忆作为 relevant_memory
+        relevant_memory: dict = {}
+        if user_id:
+            from ..services.memory_service import get_scenario_memory
+            relevant_memory = get_scenario_memory(user_id, final_scenario)
+            print(f"📋 召回场景记忆 [{final_scenario}]: {relevant_memory}")
+
+        # 4. 构建 prompt 并调用 LLM
         llm = _get_langchain_llm()
         plan_dict = plan.model_dump()
-        prompt = build_refiner_prompt(plan_dict, user_feedback)
+        prompt = build_refiner_prompt(plan_dict, user_feedback, relevant_memory)
 
         messages = [
             SystemMessage(content="你是一个严谨的旅行计划修改助手，只输出JSON，不输出其他内容。"),
@@ -385,7 +585,8 @@ def refiner_node(state: TripGraphState) -> dict[str, Any]:
         response = llm.invoke(messages)
         response_content = response.content
 
-        # 提取 JSON
+        # 5. 提取 JSON（带 fallback）
+        json_str = None
         if "```json" in response_content:
             json_str = response_content.split("```json")[1].split("```")[0].strip()
         elif "```" in response_content:
@@ -394,17 +595,27 @@ def refiner_node(state: TripGraphState) -> dict[str, Any]:
             json_start = response_content.find("{")
             json_end = response_content.rfind("}") + 1
             json_str = response_content[json_start:json_end]
+
+        if json_str:
+            updated_data = json.loads(json_str)
+            updated_plan = TripPlan(**updated_data)
         else:
             raise ValueError("未找到JSON结构")
 
-        updated_data = json.loads(json_str)
-        updated_plan = TripPlan(**updated_data)
+        # 6. 更新 history
+        new_history = history + [user_feedback]
 
-        return {"plan": updated_plan, "error": None}
+        return {
+            "plan": updated_plan,
+            "user_profile": user_profile,
+            "current_scenario": final_scenario,
+            "relevant_memory": relevant_memory,
+            "history": new_history,
+            "error": None
+        }
 
     except Exception as e:
         print(f"⚠️ 计划优化失败，回退原计划: {str(e)}")
-        # JSON 解析失败时返回原计划，不抛异常
         return {"plan": plan, "error": f"Refiner解析失败: {e}"}
 
 

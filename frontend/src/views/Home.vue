@@ -89,6 +89,29 @@
           </a-row>
         </div>
 
+        <!-- 出行目的 -->
+        <div class="form-section">
+          <div class="section-header">
+            <span class="section-icon">🎯</span>
+            <span class="section-title">出行目的</span>
+          </div>
+
+          <a-form-item name="scenario">
+            <div class="scenario-tags">
+              <a-tag
+                v-for="item in scenarioOptions"
+                :key="item.value"
+                :color="formData.scenario === item.value ? 'purple' : 'default'"
+                class="scenario-tag"
+                @click="formData.scenario = item.value"
+              >
+                <span class="scenario-icon">{{ item.icon }}</span>
+                <span class="scenario-label">{{ item.label }}</span>
+              </a-tag>
+            </div>
+          </a-form-item>
+        </div>
+
         <!-- 第二步:偏好设置 -->
         <div class="form-section">
           <div class="section-header">
@@ -216,6 +239,15 @@ const loading = ref(false)
 const loadingProgress = ref(0)
 const loadingStatus = ref('')
 
+const scenarioOptions = [
+  { value: '商务出差', icon: '💼', label: '商务出差' },
+  { value: '亲子度假', icon: '👶', label: '亲子度假' },
+  { value: '情侣伴侣', icon: '👩‍❤️‍👨', label: '情侣伴侣' },
+  { value: '朋友聚会', icon: '👯', label: '朋友聚会' },
+  { value: '独自旅行', icon: '🎒', label: '独自旅行' },
+  { value: '常规旅行', icon: '🗺️', label: '常规旅行' },
+]
+
 const formData = reactive<TripFormData & { start_date: Dayjs | null; end_date: Dayjs | null }>({
   city: '',
   start_date: null,
@@ -224,7 +256,8 @@ const formData = reactive<TripFormData & { start_date: Dayjs | null; end_date: D
   transportation: '公共交通',
   accommodation: '经济型酒店',
   preferences: [],
-  free_text_input: ''
+  free_text_input: '',
+  scenario: ''
 })
 
 // 监听日期变化,自动计算旅行天数
@@ -280,7 +313,8 @@ const handleSubmit = async () => {
       transportation: formData.transportation,
       accommodation: formData.accommodation,
       preferences: formData.preferences,
-      free_text_input: formData.free_text_input
+      free_text_input: formData.free_text_input,
+      scenario: formData.scenario || undefined
     }
 
     const response = await generateTripPlan(requestData)
@@ -292,6 +326,10 @@ const handleSubmit = async () => {
     if (response.data) {
       // 保存到sessionStorage
       sessionStorage.setItem('tripPlan', JSON.stringify(response.data))
+      // 同时保存出行场景，用于后续 refine 时传递
+      if (formData.scenario) {
+        sessionStorage.setItem('trip_scenario', formData.scenario)
+      }
 
       if (response.success) {
         message.success('旅行计划生成成功!')
@@ -568,6 +606,45 @@ const handleSubmit = async () => {
   border-color: #667eea;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
+}
+
+/* 出行目的标签 */
+.scenario-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.scenario-tag {
+  padding: 10px 20px;
+  border-radius: 24px;
+  font-size: 15px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: 2px solid #e8e8e8;
+  background: white;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scenario-tag:hover {
+  border-color: #667eea;
+  background: #f5f7ff;
+}
+
+.scenario-tag.ant-tag-purple {
+  border-color: #667eea;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.scenario-icon {
+  font-size: 18px;
+}
+
+.scenario-label {
+  font-weight: 500;
 }
 
 /* 自定义文本域 */

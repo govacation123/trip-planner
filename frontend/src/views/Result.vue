@@ -378,6 +378,19 @@ const activeDays = ref<number[]>([0]) // 默认展开第一天
 let map: any = null
 
 // ============ 聊天面板相关 ============
+// 生成或获取 sessionId（用于关联用户长期记忆）
+const getSessionId = () => {
+  let sid = sessionStorage.getItem('trip_session_id')
+  if (!sid) {
+    sid = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11)
+    sessionStorage.setItem('trip_session_id', sid)
+  }
+  return sid
+}
+
+const sessionId = ref(getSessionId())
+// 出行场景：用于 Refine 时传给后端，优先使用用户在表单中选择的场景
+const scenario = ref(sessionStorage.getItem('trip_scenario') || '')
 const userFeedback = ref('')
 const isRefining = ref(false)
 const chatHistory = ref<Array<{ role: string; content: string; timestamp?: string }>>([
@@ -409,7 +422,7 @@ const handleSendFeedback = async () => {
     chatMessagesRef.value.scrollTop = chatMessagesRef.value.scrollHeight
   }
 
-  // 2. 调用 refine 接口
+  // 2. 调用 refine 接口（携带 session_id）
   isRefining.value = true
 
   try {
@@ -420,7 +433,9 @@ const handleSendFeedback = async () => {
       },
       body: JSON.stringify({
         plan: tripPlan.value,
-        user_feedback: feedback
+        user_feedback: feedback,
+        session_id: sessionId.value,  // 传递 session_id 用于长期记忆
+        scenario: scenario.value       // 传递表单原始场景，优先于推断值
       })
     })
 

@@ -85,6 +85,7 @@ export interface TripFormData {
   accommodation: string
   preferences: string[]
   free_text_input: string
+  scenario?: string
 }
 
 export interface TripPlanResponse {

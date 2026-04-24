@@ -107,22 +107,43 @@ class AmapService:
 
     def get_weather(self, city: str) -> List[WeatherInfo]:
         """
-        查询天气
+        查询天气。
 
-        Args:
-            city: 城市名称
-
-        Returns:
-            天气信息列表
+        策略：优先通过地理编码获取 adcode，再查询预报天气；
+              如 adcode 获取失败则直接用城市名查实时天气。
         """
         try:
-            # 高德天气API支持实时天气和预报天气
-            params = {
-                "city": city,
-                "extensions": "all",  # 返回全部天气信息（实时+预报）
-                "output": "json"
-            }
-            result = self._request("/weather/weatherinfo", params)
+            # Step 1: 尝试通过地理编码获取 adcode（更精准）
+            adcode = None
+            try:
+                geocode_result = self._request("/geocode/geo", {"address": city, "output": "json"})
+                if geocode_result.get("status") == "1" and geocode_result.get("geocodes"):
+                    adcode = geocode_result["geocodes"][0].get("adcode")
+                    print(f"✅ 地理编码成功，{city} → adcode: {adcode}")
+            except Exception as e:
+                print(f"⚠️ 地理编码失败，使用城市名查询: {e}")
+
+            # Step 2: 查询天气（优先用 adcode）
+            if adcode:
+                params = {
+                    "city": adcode,
+                    "extensions": "all",
+                    "output": "json"
+                }
+                result = self._request("/weather/weatherinfo", params)
+
+                if result.get("status") != "1":
+                    print(f"⚠️ adcode 查询天气失败，尝试城市名 fallback: {result.get('info')}")
+                    result = None
+
+            if not adcode or result is None:
+                # fallback: 直接用城市名查实时天气
+                params = {
+                    "city": city,
+                    "extensions": "base",
+                    "output": "json"
+                }
+                result = self._request("/weather/weatherinfo", params)
 
             if result.get("status") != "1":
                 print(f"❌ 天气查询失败: {result.get('info', '未知错误')}")
@@ -132,7 +153,6 @@ class AmapService:
             forecasts = result.get("forecasts", [])
 
             if forecasts:
-                # 有预报天气
                 for fc in forecasts[0].get("casts", []):
                     weather_info = WeatherInfo(
                         date=fc.get("date", ""),
@@ -145,11 +165,10 @@ class AmapService:
                     )
                     weather_list.append(weather_info)
             else:
-                # 只有实时天气
                 live = result.get("lives", [])
                 for live_data in live:
                     weather_info = WeatherInfo(
-                        date=live_data.get("reporttime", "")[:10],  # 取日期部分
+                        date=live_data.get("reporttime", "")[:10],
                         day_weather=live_data.get("weather", ""),
                         night_weather=live_data.get("weather", ""),
                         day_temp=int(live_data.get("temperature", 0)),
